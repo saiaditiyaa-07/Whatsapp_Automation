@@ -44,12 +44,11 @@ import { Badge } from '../common/Badge';
 import { Select } from '../common/Select';
 import { Skeleton } from '../common/Skeleton';
 import { useWebSocketConnection } from '../../hooks/useWebSocketConnection';
+import { API_BASE, WS_BASE } from '../../lib/config';
 
 interface AnalyticsDashboardProps {
   activeWorkspace: any;
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
 
 // Sample fallback rich data for charts when API returns empty or loading
@@ -143,7 +142,7 @@ export default function AnalyticsDashboard({ activeWorkspace }: AnalyticsDashboa
   // Real-time WebSocket connection for live telemetry feed
   const wsToken = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
   const wsUrl = activeWorkspace && wsToken
-    ? `ws://localhost:8080/ws/conversations/${activeWorkspace.id}?token=${wsToken}`
+    ? `${WS_BASE}/ws/conversations/${activeWorkspace.id}?token=${wsToken}`
     : null;
 
   useWebSocketConnection(wsUrl, {

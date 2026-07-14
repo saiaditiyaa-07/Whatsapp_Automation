@@ -32,12 +32,11 @@ import { Modal } from '../common/Modal';
 import { Input } from '../common/Input';
 import { Textarea } from '../common/Textarea';
 import { useToast } from '../common/Toast';
+import { API_BASE } from '../../lib/config';
 
 interface WorkflowBuilderProps {
   activeWorkspace: any;
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
 // High-fidelity fallback sample workflows when API is empty
 const sampleWorkflows = [

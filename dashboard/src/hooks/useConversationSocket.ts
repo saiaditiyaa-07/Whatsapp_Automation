@@ -19,9 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { WsEvent, WsStatus, useWebSocketConnection } from './useWebSocketConnection';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
+import { API_BASE, WS_BASE } from '../lib/config';
 
 export interface Conversation {
   id: string;

@@ -29,6 +29,7 @@ import { Input } from '../common/Input';
 import { Badge } from '../common/Badge';
 import { useToast } from '../common/Toast';
 import { motion, AnimatePresence } from 'framer-motion';
+import { API_BASE } from '../../lib/config';
 
 // Zod validation schema for Meta WhatsApp Cloud API
 const connectionSchema = z.object({
@@ -148,7 +149,7 @@ export function ConnectionWizard({
   };
 
   const copyWebhookUrl = () => {
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080';
+    const origin = typeof window !== 'undefined' ? window.location.origin : API_BASE;
     const webhookUrl = `${origin}/api/v1/webhook/whatsapp`;
     navigator.clipboard.writeText(webhookUrl);
     toast.info('Webhook URL Copied', `${webhookUrl} copied to clipboard.`);
@@ -437,7 +438,7 @@ export function ConnectionWizard({
                     <input
                       type="text"
                       readOnly
-                      value={typeof window !== 'undefined' ? `${window.location.origin}/api/v1/webhook/whatsapp` : 'http://localhost:8080/api/v1/webhook/whatsapp'}
+                      value={typeof window !== 'undefined' ? `${window.location.origin}/api/v1/webhook/whatsapp` : `${API_BASE}/api/v1/webhook/whatsapp`}
                       className="flex-1 bg-darkBg border border-darkBorder rounded-xl px-3 py-2 text-xs font-mono text-indigo-300 select-all focus:outline-none"
                     />
                     <Button variant="secondary" size="sm" onClick={copyWebhookUrl} leftIcon={<Copy className="h-3.5 w-3.5" />}>
