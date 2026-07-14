@@ -2,27 +2,39 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Sidebar } from '../../components/Sidebar';
-import { MetricsGrid } from '../../components/MetricsGrid';
+import { AppSidebar } from '../../components/layout/AppSidebar';
+import { TopNav } from '../../components/layout/TopNav';
+import { OverviewTab } from '../../components/dashboard/OverviewTab';
+import AnalyticsDashboard from '../../components/analytics/AnalyticsDashboard';
+import { ConversationList } from '../../components/inbox/ConversationList';
+import { ChatHeader } from '../../components/inbox/ChatHeader';
+import { MessageList } from '../../components/inbox/MessageList';
+import { MessageComposer } from '../../components/inbox/MessageComposer';
+import { CustomerDetailsPanel } from '../../components/inbox/CustomerDetailsPanel';
+import { WorkflowBuilder } from '../../components/workflow/WorkflowBuilder';
+import { ConnectionWizard } from '../../components/whatsapp/ConnectionWizard';
+import { ContactsDirectory } from '../../components/crm/ContactsDirectory';
+import { BroadcastTab } from '../../components/campaigns/BroadcastTab';
+import { TemplatesTab } from '../../components/campaigns/TemplatesTab';
+import { CampaignsTab } from '../../components/campaigns/CampaignsTab';
+import { RulesTab } from '../../components/rules/RulesTab';
+import { TeamTab } from '../../components/team/TeamTab';
+import { BillingTab } from '../../components/billing/BillingTab';
+import { SettingsTab } from '../../components/settings/SettingsTab';
+import { LogsTab } from '../../components/logs/LogsTab';
 import { RuleTable, Rule } from '../../components/RuleTable';
 import { AddRuleModal } from '../../components/AddRuleModal';
+import { useConversationSocket } from '../../hooks/useConversationSocket';
+import { useChatSocket } from '../../hooks/useChatSocket';
 import {
   Plus,
   CheckCircle2,
   Eye,
   EyeOff,
   ShieldAlert,
-  MessageSquare
+  MessageSquare,
+  Loader2
 } from 'lucide-react';
-// Module 4 – WebSocket Inbox
-import { useConversationSocket } from '../../hooks/useConversationSocket';
-import { useChatSocket } from '../../hooks/useChatSocket';
-import { ConversationList } from '../../components/inbox/ConversationList';
-import { ChatHeader } from '../../components/inbox/ChatHeader';
-import { MessageList } from '../../components/inbox/MessageList';
-import { MessageComposer } from '../../components/inbox/MessageComposer';
-import { WorkflowBuilder } from '../../components/workflow/WorkflowBuilder';
-import AnalyticsDashboard from '../../components/analytics/AnalyticsDashboard';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
@@ -197,7 +209,6 @@ export default function DashboardPage() {
         });
         if (res.ok) {
           const membersList = await res.json();
-          // Map to local mock structure
           setMembers(membersList.map((m: any) => ({
             id: m.id,
             name: m.user.full_name || 'Anonymous User',
@@ -206,7 +217,6 @@ export default function DashboardPage() {
             joinedAt: new Date().toISOString()
           })));
 
-          // Extract current user ID from JWT payload sub parameter
           const payloadBase64 = token.split('.')[1];
           const decodedPayload = JSON.parse(atob(payloadBase64));
           const userId = decodedPayload.sub;
@@ -224,11 +234,154 @@ export default function DashboardPage() {
     fetchWhatsappStatus();
     fetchWorkflows();
     fetchLogs();
-    // Inbox conversations are fetched automatically by useConversationSocket
-    // when activeWorkspace changes — no manual call needed here.
   }, [activeWorkspace, currentTab, fetchWorkflows, fetchLogs]);
 
-  // Auto-scroll is handled inside MessageList component (smart scroll)
+  const fetchWhatsappStatus = async () => {
+    if (!activeWorkspace) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/whatsapp/status?workspace_id=${activeWorkspace.id}`, {
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBusinessId(data.business_account || '');
+        setPhoneNumber(data.phone_number || '');
+        setWhatsappStatus(data.connected ? 'CONNECTED' : 'DISCONNECTED');
+      } else {
+        setWhatsappStatus('DISCONNECTED');
+      }
+    } catch (err) {
+      console.error(err);
+      setWhatsappStatus('DISCONNECTED');
+    }
+  };
+
+  const handleConnectWhatsapp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!activeWorkspace) return;
+    setSaveSuccess(false);
+    setError('');
+    
+    try {
+      const res = await fetch(`${API_BASE}/api/whatsapp/connect?workspace_id=${activeWorkspace.id}`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          business_account_id: businessId,
+          phone_number_id: phoneId,
+          phone_number: phoneNumber,
+          access_token: accessToken,
+          verify_token: verifyToken,
+          app_secret: appSecret
+        })
+      });
+      
+      if (res.ok) {
+        setSaveSuccess(true);
+        setWhatsappStatus('CONNECTED');
+        setTimeout(() => setSaveSuccess(false), 3000);
+      } else {
+        const data = await res.json();
+        setError(data.detail || 'Failed to connect WhatsApp account.');
+      }
+    } catch (err: any) {
+      setError('Network connection failed. Make sure FastAPI server is running.');
+    }
+  };
+
+  const handleDisconnectWhatsapp = async () => {
+    if (!activeWorkspace) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/whatsapp/disconnect?workspace_id=${activeWorkspace.id}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        setWhatsappStatus('DISCONNECTED');
+        setPhoneId('');
+        setBusinessId('');
+        setPhoneNumber('');
+        setAccessToken('');
+        setVerifyToken('acme_production_secure_handshake_token');
+        setAppSecret('');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSendMessage = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeChatText.trim() || !selectedConversationId || !activeWorkspace) return;
+
+    const textToSend = activeChatText.trim();
+    setActiveChatText('');
+
+    const tempId = appendOptimistic(textToSend);
+
+    setIsSendingMessage(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/whatsapp/conversations/${selectedConversationId}/send?workspace_id=${activeWorkspace.id}`,
+        {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ text: textToSend }),
+        }
+      );
+      if (res.ok) {
+        const serverMsg = await res.json();
+        confirmOptimistic(tempId, serverMsg);
+      } else {
+        const data = await res.json();
+        confirmOptimistic(tempId, { id: tempId, conversation_id: selectedConversationId, meta_message_id: null, direction: 'OUTBOUND', message_type: 'text', text: `[Failed] ${textToSend}`, status: 'failed', timestamp: new Date().toISOString() });
+        alert(data.detail || 'Failed to dispatch outbound message to Meta Graph API.');
+      }
+    } catch (err) {
+      console.error(err);
+      confirmOptimistic(tempId, { id: tempId, conversation_id: selectedConversationId, meta_message_id: null, direction: 'OUTBOUND', message_type: 'text', text: `[Failed] ${textToSend}`, status: 'failed', timestamp: new Date().toISOString() });
+    } finally {
+      setIsSendingMessage(false);
+    }
+  }, [activeChatText, selectedConversationId, activeWorkspace, appendOptimistic, confirmOptimistic]);
+
+  const handleInviteMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeWorkspace) return;
+    setInviteError('');
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/workspaces/${activeWorkspace.id}/invites`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          role: inviteRole
+        })
+      });
+      if (res.ok) {
+        setIsInviteModalOpen(false);
+        setInviteEmail('');
+        const loadRes = await fetch(`${API_BASE}/api/v1/workspaces/${activeWorkspace.id}/members`, {
+          headers: getAuthHeaders()
+        });
+        if (loadRes.ok) {
+          const list = await loadRes.json();
+          setMembers(list.map((m: any) => ({
+            id: m.id,
+            name: m.user.full_name || 'Anonymous User',
+            email: m.user.email,
+            role: m.role,
+            joinedAt: new Date().toISOString()
+          })));
+        }
+      } else {
+        const data = await res.json();
+        setInviteError(data.detail || 'Failed to invite workspace member.');
+      }
+    } catch (err) {
+      setInviteError('Network connection failed.');
+    }
+  };
 
   const handleToggleRuleActive = async (id: string) => {
     if (!activeWorkspace) return;
@@ -299,182 +452,9 @@ export default function DashboardPage() {
     }
   };
 
-
-
-  const fetchWhatsappStatus = async () => {
-    if (!activeWorkspace) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/whatsapp/status?workspace_id=${activeWorkspace.id}`, {
-        headers: getAuthHeaders()
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setBusinessId(data.business_account || '');
-        setPhoneNumber(data.phone_number || '');
-        setWhatsappStatus(data.connected ? 'CONNECTED' : 'DISCONNECTED');
-      } else {
-        setWhatsappStatus('DISCONNECTED');
-      }
-    } catch (err) {
-      console.error(err);
-      setWhatsappStatus('DISCONNECTED');
-    }
-  };
-
-  const handleConnectWhatsapp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeWorkspace) return;
-    setSaveSuccess(false);
-    setError('');
-    
-    try {
-      const res = await fetch(`${API_BASE}/api/whatsapp/connect?workspace_id=${activeWorkspace.id}`, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          business_account_id: businessId,
-          phone_number_id: phoneId,
-          phone_number: phoneNumber,
-          access_token: accessToken,
-          verify_token: verifyToken,
-          app_secret: appSecret
-        })
-      });
-      
-      if (res.ok) {
-        setSaveSuccess(true);
-        setWhatsappStatus('CONNECTED');
-        setTimeout(() => setSaveSuccess(false), 3000);
-      } else {
-        const data = await res.json();
-        setError(data.detail || 'Failed to connect WhatsApp account.');
-      }
-    } catch (err: any) {
-      setError('Network connection failed. Make sure FastAPI server is running.');
-    }
-  };
-
-  const handleDisconnectWhatsapp = async () => {
-    if (!activeWorkspace) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/whatsapp/disconnect?workspace_id=${activeWorkspace.id}`, {
-        method: 'DELETE',
-        headers: getAuthHeaders()
-      });
-      if (res.ok) {
-        setWhatsappStatus('DISCONNECTED');
-        setPhoneId('');
-        setBusinessId('');
-        setPhoneNumber('');
-        setAccessToken('');
-        setVerifyToken('acme_production_secure_handshake_token');
-        setAppSecret('');
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // handleSendMessage uses optimistic UI then confirms via WebSocket event
-  const handleSendMessage = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeChatText.trim() || !selectedConversationId || !activeWorkspace) return;
-
-    const textToSend = activeChatText.trim();
-    setActiveChatText('');
-
-    // 1. Append optimistic message immediately for responsive UI
-    const tempId = appendOptimistic(textToSend);
-
-    setIsSendingMessage(true);
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/whatsapp/conversations/${selectedConversationId}/send?workspace_id=${activeWorkspace.id}`,
-        {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          body: JSON.stringify({ text: textToSend }),
-        }
-      );
-      if (res.ok) {
-        const serverMsg = await res.json();
-        // 2. Replace optimistic with confirmed server message
-        confirmOptimistic(tempId, serverMsg);
-        // Note: conversation list update arrives via WebSocket broadcast
-      } else {
-        const data = await res.json();
-        // Remove optimistic on failure
-        confirmOptimistic(tempId, { id: tempId, conversation_id: selectedConversationId, meta_message_id: null, direction: 'OUTBOUND', message_type: 'text', text: `[Failed] ${textToSend}`, status: 'failed', timestamp: new Date().toISOString() });
-        alert(data.detail || 'Failed to dispatch outbound message to Meta Graph API.');
-      }
-    } catch (err) {
-      console.error(err);
-      confirmOptimistic(tempId, { id: tempId, conversation_id: selectedConversationId, meta_message_id: null, direction: 'OUTBOUND', message_type: 'text', text: `[Failed] ${textToSend}`, status: 'failed', timestamp: new Date().toISOString() });
-    } finally {
-      setIsSendingMessage(false);
-    }
-  }, [activeChatText, selectedConversationId, activeWorkspace, appendOptimistic, confirmOptimistic]);
-
-  const handleInviteMember = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeWorkspace) return;
-    setInviteError('');
-    try {
-      const res = await fetch(`${API_BASE}/api/v1/workspaces/${activeWorkspace.id}/invites`, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          email: inviteEmail.trim(),
-          role: inviteRole
-        })
-      });
-      if (res.ok) {
-        setIsInviteModalOpen(false);
-        setInviteEmail('');
-        // Reload members list
-        const loadRes = await fetch(`${API_BASE}/api/v1/workspaces/${activeWorkspace.id}/members`, {
-          headers: getAuthHeaders()
-        });
-        if (loadRes.ok) {
-          const list = await loadRes.json();
-          setMembers(list.map((m: any) => ({
-            id: m.id,
-            name: m.user.full_name || 'Anonymous User',
-            email: m.user.email,
-            role: m.role,
-            joinedAt: new Date().toISOString()
-          })));
-        }
-      } else {
-        const data = await res.json();
-        setInviteError(data.detail || 'Failed to invite workspace member.');
-      }
-    } catch (err) {
-      setInviteError('Network connection failed.');
-    }
-  };
-
-  useEffect(() => {
-    if (currentTab === 'whatsapp') {
-      fetchWhatsappStatus();
-    }
-    // Inbox: No polling needed – WebSocket hooks handle real-time updates automatically
-  }, [currentTab]);
-
   const handleLogout = () => {
     localStorage.removeItem('auth_token');
     router.push('/auth/login');
-  };
-
-  const renderStatus = (status: string) => {
-    if (status === 'sent') {
-      return <span className="text-[10px] text-slate-400 select-none ml-1">✓</span>;
-    } else if (status === 'delivered') {
-      return <span className="text-[10px] text-slate-400 select-none ml-1">✓✓</span>;
-    } else if (status === 'read') {
-      return <span className="text-[10px] text-sky-400 font-bold select-none ml-1">✓✓</span>;
-    }
-    return null;
   };
 
   const stats = {
@@ -490,7 +470,10 @@ export default function DashboardPage() {
   if (isVerifyingAuth) {
     return (
       <div className="min-h-screen bg-darkBg text-slate-100 flex items-center justify-center">
-        <div className="h-8 w-8 rounded-lg bg-indigo-650 animate-pulse" />
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 text-brandIndigo animate-spin" />
+          <span className="text-xs font-semibold text-slate-400">Loading LeadWave Enterprise Workspace...</span>
+        </div>
       </div>
     );
   }
@@ -505,7 +488,7 @@ export default function DashboardPage() {
           <div>
             <h2 className="text-xl font-bold text-white">Create Your First Workspace</h2>
             <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-              OmniChannel requires a workspace to manage team members, WhatsApp Business accounts, visual automation builders, and real-time conversation threads.
+              LeadWave Pro requires a workspace to manage team members, WhatsApp Business accounts, visual automation builders, and real-time conversation threads.
             </p>
           </div>
           <form onSubmit={async (e) => {
@@ -538,24 +521,24 @@ export default function DashboardPage() {
               <input
                 type="text"
                 name="workspaceName"
-                placeholder="e.g. ABC Electronics"
-                className="w-full px-4 py-2.5 text-xs bg-darkBg border border-darkBorder rounded-lg text-slate-200 placeholder-slate-500 focus:outline-none focus:border-brandIndigo"
+                placeholder="e.g. ABC Electronics Enterprise"
+                className="w-full px-4 py-2.5 text-xs bg-darkBg border border-darkBorder rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:border-brandIndigo"
                 required
               />
             </div>
             <button
               type="submit"
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow-md transition-all outline-none"
+              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md transition-all outline-none"
             >
-              Create Workspace
+              Create Workspace Scope →
             </button>
           </form>
           <div className="pt-4 border-t border-darkBorder flex justify-center">
             <button
               onClick={handleLogout}
-              className="text-xs text-brandRed hover:underline"
+              className="text-xs text-brandRed hover:underline font-semibold"
             >
-              Logout
+              Sign Out
             </button>
           </div>
         </div>
@@ -564,377 +547,48 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-darkBg text-slate-100">
-      {/* Sidebar switcher container */}
-      <Sidebar 
-        currentTab={currentTab} 
-        setCurrentTab={setCurrentTab} 
+    <div className="flex min-h-screen bg-darkBg text-slate-100 font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
+      {/* Enterprise AppSidebar */}
+      <AppSidebar
+        currentTab={currentTab}
+        setCurrentTab={setCurrentTab}
         workspaces={workspacesList}
         activeWorkspace={activeWorkspace}
         setActiveWorkspace={setActiveWorkspace}
         userRole={userRole}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto">
-        {/* Top Navigation / Status Header */}
-        <header className="px-8 py-5 bg-darkSurface border-b border-darkBorder flex items-center justify-between select-none">
-          <div className="flex items-center gap-4 text-left">
-            <h2 className="text-sm font-semibold tracking-wide text-white capitalize">
-              {currentTab.replace('-', ' ')}
-            </h2>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-semibold text-emerald-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
-              Meta Cloud Webhook Active
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <span className="text-xs text-slate-400">Connection: <b className="text-slate-200">v19.0</b></span>
-            <button 
-              onClick={handleLogout}
-              className="text-xs font-semibold text-brandRed hover:bg-brandRed/10 px-3 py-1.5 rounded-lg border border-brandRed/20 transition-all outline-none"
-            >
-              Logout
-            </button>
-          </div>
-        </header>
+      {/* Main Content & TopNav */}
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
+        <TopNav
+          activeWorkspace={activeWorkspace}
+          currentTab={currentTab}
+          userRole={userRole}
+          whatsappStatus={whatsappStatus}
+          convSocketStatus={convSocketStatus}
+          chatSocketStatus={chatSocketStatus}
+          onOpenSearch={() => {
+            const el = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
+            if (el) el.focus();
+          }}
+          onSelectTab={setCurrentTab}
+        />
 
-        {/* Dynamic tabs controller */}
-        <div className="p-8 space-y-8">
-          {/* TAB 1: OVERVIEW */}
+        <main className="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar">
+          {/* TAB: OVERVIEW */}
           {currentTab === 'overview' && (
-            <>
-              {/* Metrics Grid */}
-              <MetricsGrid stats={stats} />
-
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Rules Table */}
-                <div className="lg:col-span-2 space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div className="text-left">
-                      <h3 className="text-sm font-semibold text-white">Recent Automation Rules</h3>
-                      <p className="text-xs text-slate-400 mt-1">Quick view of keyword response templates.</p>
-                    </div>
-                    <button
-                      onClick={() => setIsAddModalOpen(true)}
-                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-505 text-white text-xs font-semibold px-3 py-2 rounded-lg shadow transition-all outline-none"
-                    >
-                      <Plus className="h-4 w-4" /> Add Rule
-                    </button>
-                  </div>
-                  <RuleTable 
-                    rules={rules.slice(0, 3)} 
-                    onToggleActive={handleToggleRuleActive} 
-                    onDelete={handleDeleteRule} 
-                  />
-                </div>
-
-                {/* execution logs summary */}
-                <div className="bg-darkSurface border border-darkBorder rounded-xl p-6 flex flex-col justify-between">
-                  <div className="text-left">
-                    <h3 className="text-sm font-semibold text-white">Rule Execution Logs</h3>
-                    <p className="text-xs text-slate-400 mt-1">Real-time keyword triggers</p>
-                    <div className="space-y-4 mt-6">
-                      {logs.slice(0, 4).map((log) => (
-                        <div key={log.id} className="flex items-start justify-between gap-4 p-3 bg-darkBg/40 border border-darkBorder/40 rounded-lg hover:border-slate-700 transition-colors">
-                          <div className="overflow-hidden text-left">
-                            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${
-                              log.direction === 'INBOUND' ? 'bg-indigo-500/10 text-indigo-400' : 'bg-emerald-500/10 text-emerald-400'
-                            }`}>
-                              {log.direction}
-                            </span>
-                            <p className="text-xs text-slate-300 font-medium truncate mt-2">{log.messageText}</p>
-                            <span className="text-[10px] text-slate-500 block mt-1">To/From: {log.senderPhone}</span>
-                          </div>
-                          <div className="text-right flex flex-col items-end gap-1">
-                            <span className={`text-[8px] font-semibold px-1.5 py-0.5 rounded-full ${
-                              log.status === 'READ' ? 'bg-indigo-500/10 text-indigo-400' : 'bg-emerald-500/10 text-emerald-400'
-                            }`}>
-                              {log.status}
-                            </span>
-                            <span className="text-[9px] text-slate-500 mt-2 font-mono">
-                              {new Date(log.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => setCurrentTab('logs')}
-                    className="text-xs font-semibold text-brandIndigo hover:text-indigo-400 mt-6 flex items-center gap-1.5 hover:underline outline-none text-left"
-                  >
-                    View entire message history <Plus className="h-3.5 w-3.5 rotate-45" />
-                  </button>
-                </div>
-              </div>
-            </>
+            <OverviewTab
+              activeWorkspace={activeWorkspace}
+              stats={stats}
+              whatsappStatus={whatsappStatus}
+              onSelectTab={setCurrentTab}
+            />
           )}
 
-          {/* TAB 1.5: ANALYTICS */}
-          {currentTab === 'analytics' && activeWorkspace && (
-            <AnalyticsDashboard activeWorkspace={activeWorkspace} />
-          )}
-
-          {/* TAB 2: RULES */}
-          {currentTab === 'rules' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="text-left">
-                  <h3 className="text-sm font-semibold text-white">Keyword Automation Rules</h3>
-                  <p className="text-xs text-slate-400 mt-1">Build modular triggers matching received message strings to automatic replies.</p>
-                </div>
-                <button
-                  onClick={() => setIsAddModalOpen(true)}
-                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-md transition-all outline-none"
-                >
-                  <Plus className="h-4 w-4" /> Add Automation Rule
-                </button>
-              </div>
-              <RuleTable 
-                rules={rules} 
-                onToggleActive={handleToggleRuleActive} 
-                onDelete={handleDeleteRule} 
-              />
-            </div>
-          )}
-
-          {/* TAB 3: CONTACTS */}
-          {currentTab === 'contacts' && (
-            <div className="space-y-6">
-              <div className="text-left">
-                <h3 className="text-sm font-semibold text-white">Contact Directory</h3>
-                <p className="text-xs text-slate-400 mt-1">Multi-tenant client profiles updated via webhook signals.</p>
-              </div>
-
-              <div className="bg-darkSurface border border-darkBorder rounded-xl overflow-hidden shadow-sm">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-darkBorder bg-darkBg/20 text-slate-400 text-[10px] font-semibold uppercase tracking-wider">
-                      <th className="px-6 py-4">Contact Details</th>
-                      <th className="px-6 py-4">Phone Number</th>
-                      <th className="px-6 py-4">Workspace Scope</th>
-                      <th className="px-6 py-4">Last Active</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-darkBorder/40 text-xs text-slate-200">
-                    {contacts.map((contact) => (
-                      <tr key={contact.id} className="hover:bg-slate-800/20 transition-colors">
-                        <td className="px-6 py-4 font-semibold text-slate-100 flex items-center gap-2">
-                          <div className="h-7 w-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-slate-300 text-[10px]">
-                            {contact.name.split(' ').map(n=>n[0]).join('')}
-                          </div>
-                          {contact.name}
-                        </td>
-                        <td className="px-6 py-4 font-mono text-slate-400">+{contact.phone}</td>
-                        <td className="px-6 py-4">
-                          <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] text-slate-300">
-                            {activeWorkspace ? activeWorkspace.name : 'Unknown Workspace'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-slate-500 font-mono">
-                          {new Date(contact.lastActive).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 4: WHATSAPP SETUP */}
-          {currentTab === 'whatsapp' && (
-            <div className="max-w-2xl space-y-6 text-left">
-              <div>
-                <h3 className="text-sm font-semibold text-white">Meta WhatsApp Integration Setup</h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  Connect your credentials to activate webhooks and live dashboard monitoring.
-                </p>
-              </div>
-
-              {/* Status Banner */}
-              <div className={`p-4 rounded-xl border flex items-center justify-between ${
-                whatsappStatus === 'CONNECTED' 
-                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
-                  : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-              }`}>
-                <div className="flex items-center gap-2.5">
-                  <span className={`h-2.5 w-2.5 rounded-full ${
-                    whatsappStatus === 'CONNECTED' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-                  }`} />
-                  <span className="text-xs font-semibold">
-                    Integration Status: {whatsappStatus}
-                  </span>
-                </div>
-                {whatsappStatus === 'CONNECTED' && (
-                  <button
-                    onClick={handleDisconnectWhatsapp}
-                    disabled={isReadOnly}
-                    className="text-xs font-semibold text-brandRed hover:bg-brandRed/10 disabled:opacity-40 border border-brandRed/20 px-3 py-1.5 rounded-lg transition-colors outline-none"
-                  >
-                    Disconnect
-                  </button>
-                )}
-              </div>
-
-              {isReadOnly && (
-                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs font-medium text-amber-400 flex items-center gap-2">
-                  <ShieldAlert className="h-4 w-4" />
-                  Your role ({userRole}) only has read-only access. Owners and Admins may connect credentials.
-                </div>
-              )}
-
-              {error && (
-                <div className="p-3 rounded-lg bg-brandRed/10 border border-brandRed/20 text-xs font-medium text-brandRed flex items-center gap-2">
-                  <ShieldAlert className="h-4 w-4" />
-                  {error}
-                </div>
-              )}
-
-              <div className="bg-darkSurface border border-darkBorder rounded-xl p-6">
-                <form onSubmit={handleConnectWhatsapp} className="space-y-6">
-                  {/* Phone ID */}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                      WhatsApp Phone Number ID
-                    </label>
-                    <input
-                      type="text"
-                      value={phoneId}
-                      onChange={(e) => setPhoneId(e.target.value)}
-                      disabled={isReadOnly}
-                      className="w-full px-3 py-2.5 text-xs bg-darkBg border border-darkBorder rounded-lg text-slate-205 focus:outline-none focus:border-brandIndigo disabled:opacity-50"
-                      required
-                    />
-                  </div>
-
-                  {/* Phone Number */}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-350 uppercase tracking-wider mb-2">
-                      WhatsApp Phone Number
-                    </label>
-                    <input
-                      type="text"
-                      value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value)}
-                      placeholder="e.g. 15550199999"
-                      disabled={isReadOnly}
-                      className="w-full px-3 py-2.5 text-xs bg-darkBg border border-darkBorder rounded-lg text-slate-205 focus:outline-none focus:border-brandIndigo disabled:opacity-50"
-                      required
-                    />
-                  </div>
-
-                  {/* Account ID */}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                      WhatsApp Business Account ID (WABA ID)
-                    </label>
-                    <input
-                      type="text"
-                      value={businessId}
-                      onChange={(e) => setBusinessId(e.target.value)}
-                      disabled={isReadOnly}
-                      className="w-full px-3 py-2.5 text-xs bg-darkBg border border-darkBorder rounded-lg text-slate-205 focus:outline-none focus:border-brandIndigo disabled:opacity-50"
-                      required
-                    />
-                  </div>
-
-                  {/* Access Token */}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                      System User Access Token
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showAccessToken ? 'text' : 'password'}
-                        value={accessToken}
-                        onChange={(e) => setAccessToken(e.target.value)}
-                        disabled={isReadOnly}
-                        className="w-full pl-3 pr-10 py-2.5 text-xs bg-darkBg border border-darkBorder rounded-lg text-slate-205 font-mono focus:outline-none focus:border-brandIndigo disabled:opacity-50"
-                        required
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowAccessToken(!showAccessToken)}
-                        className="absolute right-3 top-3.5 text-slate-400 hover:text-slate-200 outline-none"
-                      >
-                        {showAccessToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Verification Token */}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                      Webhook Verification Handshake Token (`hub.verify_token`)
-                    </label>
-                    <input
-                      type="text"
-                      value={verifyToken}
-                      onChange={(e) => setVerifyToken(e.target.value)}
-                      disabled={isReadOnly}
-                      className="w-full px-3 py-2.5 text-xs bg-darkBg border border-darkBorder rounded-lg text-slate-205 font-mono focus:outline-none focus:border-brandIndigo disabled:opacity-50"
-                      required
-                    />
-                  </div>
-
-                  {/* App Secret */}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                      Meta App Secret (HMAC SHA-256 validation)
-                    </label>
-                    <input
-                      type="password"
-                      value={appSecret}
-                      onChange={(e) => setAppSecret(e.target.value)}
-                      placeholder="Enter App Secret"
-                      disabled={isReadOnly}
-                      className="w-full px-3 py-2.5 text-xs bg-darkBg border border-darkBorder rounded-lg text-slate-205 font-mono focus:outline-none focus:border-brandIndigo disabled:opacity-50"
-                      required
-                    />
-                  </div>
-
-                  {/* Save button */}
-                  <div className="flex items-center gap-4 pt-4 border-t border-darkBorder">
-                    <button
-                      type="submit"
-                      disabled={isReadOnly}
-                      className="px-5 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-505 disabled:bg-slate-800 disabled:text-slate-500 rounded-lg shadow-md transition-all outline-none"
-                    >
-                      Connect WhatsApp Business Account
-                    </button>
-                    {saveSuccess && (
-                      <span className="flex items-center gap-1 text-xs font-medium text-emerald-400">
-                        <CheckCircle2 className="h-4 w-4" /> Connection established and verified successfully!
-                      </span>
-                    )}
-                  </div>
-                </form>
-              </div>
-
-              {/* Webhook credentials helper */}
-              <div className="mt-4 p-4 bg-slate-800/40 border border-slate-700/60 rounded-xl text-left">
-                <h4 className="text-xs font-semibold text-slate-200">Webhook Integration Credentials</h4>
-                <p className="text-[11px] text-slate-400 mt-1">Configure these parameters inside your Facebook Developer console:</p>
-                <div className="mt-3 space-y-2 text-xs font-mono">
-                  <div className="flex items-center justify-between bg-darkBg px-3 py-1.5 rounded border border-darkBorder">
-                    <span className="text-slate-400">Callback URL:</span>
-                    <span className="text-slate-200">{API_BASE}/webhook/meta</span>
-                  </div>
-                  <div className="flex items-center justify-between bg-darkBg px-3 py-1.5 rounded border border-darkBorder">
-                    <span className="text-slate-400">Verify Token:</span>
-                    <span className="text-slate-200">{verifyToken || 'acme_production_secure_handshake_token'}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB: INBOX – Module 4 Real-Time WebSocket Inbox */}
+          {/* TAB: INBOX (3-Column Enterprise CRM) */}
           {currentTab === 'inbox' && (
-            <div className="h-[calc(100vh-140px)] flex border border-white/5 bg-darkSurface rounded-2xl overflow-hidden shadow-2xl">
-              {/* Left Panel – Conversation List (WebSocket powered) */}
+            <div className="h-[calc(100vh-140px)] flex border border-darkBorder bg-darkSurface rounded-2xl overflow-hidden shadow-2xl">
+              {/* Left Panel – Conversation List */}
               <ConversationList
                 conversations={conversations}
                 selectedId={selectedConversationId}
@@ -946,8 +600,8 @@ export default function DashboardPage() {
                 connectionStatus={convSocketStatus}
               />
 
-              {/* Right Panel – Chat Window */}
-              <div className="flex-1 flex flex-col bg-darkBg/30 min-w-0">
+              {/* Center Panel – Chat Window */}
+              <div className="flex-1 flex flex-col bg-darkBg/30 min-w-0 border-r border-darkBorder">
                 {selectedConversationId ? (
                   <>
                     <ChatHeader
@@ -968,164 +622,144 @@ export default function DashboardPage() {
                   </>
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center text-slate-600 select-none p-8 gap-4">
-                    <div className="h-16 w-16 rounded-2xl bg-slate-800/50 border border-white/5 flex items-center justify-center">
+                    <div className="h-16 w-16 rounded-2xl bg-slate-800/50 border border-white/5 flex items-center justify-center shadow-inner">
                       <MessageSquare className="h-7 w-7 text-slate-700" />
                     </div>
                     <div className="text-center">
-                      <p className="text-sm font-medium text-slate-500">No conversation selected</p>
-                      <p className="text-xs text-slate-600 mt-1">Pick a conversation from the left to start chatting.</p>
+                      <p className="text-sm font-bold text-slate-400">No conversation selected</p>
+                      <p className="text-xs text-slate-500 mt-1">Pick a conversation from the left queue to start real-time messaging.</p>
                     </div>
                   </div>
                 )}
               </div>
+
+              {/* Right Panel – Customer CRM Details Panel */}
+              {selectedConversationId && (
+                <div className="w-80 hidden xl:block bg-darkCard/90 shrink-0 overflow-y-auto border-l border-darkBorder">
+                  <CustomerDetailsPanel
+                    conversation={conversations.find(c => c.id === selectedConversationId)}
+                    onClose={() => setSelectedConversationId(null)}
+                  />
+                </div>
+              )}
             </div>
           )}
 
-          {/* TAB: WORKFLOW AUTOMATIONS – Module 5 Automation Engine */}
+          {/* TAB: CONTACTS CRM */}
+          {currentTab === 'contacts' && (
+            <ContactsDirectory
+              contacts={contacts}
+              onSelectContact={(phone, id) => {
+                setSelectedConversationId(id);
+                setCurrentTab('inbox');
+              }}
+              isReadOnly={isReadOnly}
+            />
+          )}
+
+          {/* TAB: BROADCAST SENDER */}
+          {currentTab === 'broadcast' && (
+            <BroadcastTab activeWorkspace={activeWorkspace} isReadOnly={isReadOnly} />
+          )}
+
+          {/* TAB: VISUAL WORKFLOWS */}
           {currentTab === 'workflows' && activeWorkspace && (
             <WorkflowBuilder activeWorkspace={activeWorkspace} />
           )}
 
-          {/* TAB 5: LOGS */}
+          {/* TAB: AUTOMATION RULES */}
+          {currentTab === 'rules' && (
+            <RulesTab
+              rules={rules}
+              onAddRule={handleAddRule}
+              onToggleActive={handleToggleRuleActive}
+              onDeleteRule={handleDeleteRule}
+              isReadOnly={isReadOnly}
+            />
+          )}
+
+          {/* TAB: TEMPLATES DIRECTORY */}
+          {currentTab === 'templates' && (
+            <TemplatesTab isReadOnly={isReadOnly} />
+          )}
+
+          {/* TAB: MARKETING CAMPAIGNS */}
+          {currentTab === 'campaigns' && (
+            <CampaignsTab onOpenBroadcast={() => setCurrentTab('broadcast')} />
+          )}
+
+          {/* TAB: ANALYTICS INSIGHTS */}
+          {currentTab === 'analytics' && activeWorkspace && (
+            <AnalyticsDashboard activeWorkspace={activeWorkspace} />
+          )}
+
+          {/* TAB: ACTIVITY LOGS */}
           {currentTab === 'logs' && (
-            <div className="space-y-6">
-              <div className="text-left">
-                <h3 className="text-sm font-semibold text-white">System Message Activity Logs</h3>
-                <p className="text-xs text-slate-400 mt-1">Real-time records tracking delivery state metrics and triggers.</p>
-              </div>
-
-              <div className="bg-darkSurface border border-darkBorder rounded-xl overflow-hidden shadow-sm">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-darkBorder bg-darkBg/20 text-slate-400 text-[10px] font-semibold uppercase tracking-wider">
-                      <th className="px-6 py-4">Direction</th>
-                      <th className="px-6 py-4">Sender Phone</th>
-                      <th className="px-6 py-4">Recipient Phone</th>
-                      <th className="px-6 py-4">Message Body</th>
-                      <th className="px-6 py-4">Webhook Status</th>
-                      <th className="px-6 py-4">Timestamp</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-darkBorder/40 text-xs text-slate-200">
-                    {logs.map((log) => (
-                      <tr key={log.id} className="hover:bg-slate-800/20 transition-colors">
-                        <td className="px-6 py-4">
-                          <span className={`text-[9px] font-semibold px-2 py-0.5 rounded ${
-                            log.direction === 'INBOUND' ? 'bg-indigo-500/10 text-brandIndigo' : 'bg-emerald-500/10 text-emerald-400'
-                          }`}>
-                            {log.direction}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 font-mono text-slate-400">{log.senderPhone}</td>
-                        <td className="px-6 py-4 font-mono text-slate-400">{log.recipientPhone}</td>
-                        <td className="px-6 py-4 font-medium max-w-sm truncate text-slate-300">{log.messageText}</td>
-                        <td className="px-6 py-4">
-                          <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
-                            log.status === 'READ' ? 'bg-indigo-500/15 text-indigo-400' : 'bg-emerald-500/15 text-brandGreen'
-                          }`}>
-                            <span className={`h-1 w-1 rounded-full ${
-                              log.status === 'READ' ? 'bg-indigo-400' : 'bg-brandGreen'
-                            }`} />
-                            {log.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-slate-505 font-mono">
-                          {new Date(log.createdAt).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <LogsTab logs={logs} />
           )}
 
-          {/* TAB 6: WORKSPACE SETTINGS */}
+          {/* TAB: TEAM & ROLES */}
+          {currentTab === 'team' && (
+            <TeamTab
+              members={members}
+              onInviteMember={async (email, role) => {
+                setInviteEmail(email);
+                setInviteRole(role);
+                setIsInviteModalOpen(true);
+              }}
+              onRemoveMember={async (id) => {
+                const token = localStorage.getItem('auth_token');
+                if (!token || !activeWorkspace) return;
+                try {
+                  const res = await fetch(`${API_BASE}/api/v1/workspaces/${activeWorkspace.id}/members/${id}`, {
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
+                  });
+                  if (res.ok) {
+                    setMembers(prev => prev.filter(m => m.id !== id));
+                  }
+                } catch (err) {
+                  console.error(err);
+                }
+              }}
+              isReadOnly={isReadOnly}
+              activeWorkspace={activeWorkspace}
+            />
+          )}
+
+          {/* TAB: WHATSAPP SETUP */}
+          {currentTab === 'whatsapp' && (
+            <ConnectionWizard
+              phoneId={phoneId}
+              onPhoneIdChange={setPhoneId}
+              businessId={businessId}
+              onBusinessIdChange={setBusinessId}
+              phoneNumber={phoneNumber}
+              onPhoneNumberChange={setPhoneNumber}
+              accessToken={accessToken}
+              onAccessTokenChange={setAccessToken}
+              verifyToken={verifyToken}
+              onVerifyTokenChange={setVerifyToken}
+              appSecret={appSecret}
+              onAppSecretChange={setAppSecret}
+              whatsappStatus={whatsappStatus}
+              onSave={handleConnectWhatsapp}
+              isReadOnly={isReadOnly}
+              activeWorkspace={activeWorkspace}
+            />
+          )}
+
+          {/* TAB: BILLING & QUOTA */}
+          {currentTab === 'billing' && (
+            <BillingTab isReadOnly={isReadOnly} />
+          )}
+
+          {/* TAB: WORKSPACE SETTINGS */}
           {currentTab === 'workspace' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="text-left">
-                  <h3 className="text-sm font-semibold text-white">Workspace Members & Settings</h3>
-                  <p className="text-xs text-slate-400 mt-1">Manage team members, roles, permissions, and workspace attributes.</p>
-                </div>
-                <button
-                  onClick={() => setIsInviteModalOpen(true)}
-                  disabled={isReadOnly}
-                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-550 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-md transition-all outline-none"
-                >
-                  <Plus className="h-4 w-4" /> Invite Member
-                </button>
-              </div>
-
-              {/* Members Table */}
-              <div className="bg-darkSurface border border-darkBorder rounded-xl overflow-hidden shadow-sm">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-darkBorder bg-darkBg/20 text-slate-400 text-[10px] font-semibold uppercase tracking-wider">
-                      <th className="px-6 py-4">User Details</th>
-                      <th className="px-6 py-4">Email</th>
-                      <th className="px-6 py-4">Workspace Role</th>
-                      <th className="px-6 py-4">Joined At</th>
-                      <th className="px-6 py-4 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-darkBorder/40 text-xs text-slate-200">
-                    {members.map((member) => (
-                      <tr key={member.id} className="hover:bg-slate-800/20 transition-colors">
-                        <td className="px-6 py-4 font-semibold text-slate-100 flex items-center gap-2">
-                          <div className="h-7 w-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-slate-300 text-[10px]">
-                            {member.name.split(' ').map(n=>n[0]).join('')}
-                          </div>
-                          {member.name}
-                        </td>
-                        <td className="px-6 py-4 font-mono text-slate-400">{member.email}</td>
-                        <td className="px-6 py-4">
-                          <span className={`text-[9px] font-semibold px-2 py-0.5 rounded ${
-                            member.role === 'OWNER' ? 'bg-indigo-500/10 text-brandIndigo' :
-                            member.role === 'ADMIN' ? 'bg-emerald-500/10 text-brandGreen' : 'bg-slate-800 text-slate-400'
-                          }`}>
-                            {member.role}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-slate-505 font-mono">
-                          {new Date(member.joinedAt).toLocaleDateString()}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          {member.role !== 'OWNER' && (
-                            <button
-                              onClick={async () => {
-                                // Real delete member REST call
-                                const token = localStorage.getItem('auth_token');
-                                if (!token || !activeWorkspace) return;
-                                try {
-                                  // Wait, let's look up member user ID
-                                  const res = await fetch(`${API_BASE}/api/v1/workspaces/${activeWorkspace.id}/members/${member.id}`, {
-                                    method: 'DELETE',
-                                    headers: getAuthHeaders()
-                                  });
-                                  if (res.ok) {
-                                    setMembers(prev => prev.filter(m => m.id !== member.id));
-                                  }
-                                } catch (err) {
-                                  console.error(err);
-                                }
-                              }}
-                              disabled={isReadOnly}
-                              className="text-xs font-semibold text-brandRed hover:underline disabled:opacity-40 bg-transparent border-none cursor-pointer outline-none"
-                            >
-                              Remove
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <SettingsTab activeWorkspace={activeWorkspace} isReadOnly={isReadOnly} />
           )}
-        </div>
-      </main>
+        </main>
+      </div>
 
       {/* Add Rule Modal */}
       <AddRuleModal
@@ -1140,7 +774,7 @@ export default function DashboardPage() {
           <div className="bg-darkSurface border border-darkBorder rounded-2xl w-full max-w-md shadow-2xl relative overflow-hidden text-left">
             <div className="p-6 border-b border-darkBorder flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-semibold text-white">Invite Workspace Member</h3>
+                <h3 className="text-sm font-semibold text-white">Invite Workspace Teammate</h3>
                 <p className="text-[11px] text-slate-400 mt-1">Send an invitation to join this workspace scope.</p>
               </div>
               <button 
@@ -1157,36 +791,37 @@ export default function DashboardPage() {
 
             <form onSubmit={handleInviteMember} className="p-6 space-y-4">
               {inviteError && (
-                <div className="p-2 rounded bg-brandRed/10 border border-brandRed/20 text-[10px] text-brandRed font-medium">
-                  {inviteError}
+                <div className="p-2.5 rounded-xl bg-brandRed/10 border border-brandRed/20 text-xs text-brandRed font-semibold flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 shrink-0" />
+                  <span>{inviteError}</span>
                 </div>
               )}
               <div>
-                <label className="block text-[10px] font-semibold text-slate-350 uppercase tracking-wider mb-2">
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                   Teammate Email Address
                 </label>
                 <input
                   type="email"
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder="name@acme.com"
-                  className="w-full px-3 py-2 text-xs bg-darkBg border border-darkBorder rounded-lg text-slate-200 focus:outline-none focus:border-brandIndigo"
+                  placeholder="colleague@company.com"
+                  className="w-full px-3.5 py-2.5 text-xs bg-darkBg border border-darkBorder rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:border-brandIndigo"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-[10px] font-semibold text-slate-350 uppercase tracking-wider mb-2">
-                  Workspace Role
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Workspace Role (RBAC)
                 </label>
                 <select
                   value={inviteRole}
                   onChange={(e) => setInviteRole(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-darkBg border border-darkBorder rounded-lg text-slate-205 focus:outline-none focus:border-brandIndigo"
+                  className="w-full px-3.5 py-2.5 text-xs bg-darkBg border border-darkBorder rounded-xl text-slate-200 focus:outline-none focus:border-brandIndigo"
                 >
-                  <option value="MEMBER">MEMBER (Read/Write triggers)</option>
-                  <option value="ADMIN">ADMIN (Invite members & setup credentials)</option>
-                  <option value="VIEWER">VIEWER (Read-only access)</option>
+                  <option value="ADMIN">ADMIN (Full operations, workflows, broadcasts)</option>
+                  <option value="MEMBER">MEMBER (Live inbox support agent, CRM)</option>
+                  <option value="VIEWER">VIEWER (Read-only analytics & log auditor)</option>
                 </select>
               </div>
 
@@ -1194,15 +829,15 @@ export default function DashboardPage() {
                 <button
                   type="button"
                   onClick={() => setIsInviteModalOpen(false)}
-                  className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-slate-200 bg-slate-800/40 rounded-lg outline-none"
+                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 bg-slate-800/40 hover:bg-slate-800 rounded-xl outline-none transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg outline-none"
+                  className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-md transition-all outline-none"
                 >
-                  Send Invitation
+                  Send Invitation →
                 </button>
               </div>
             </form>

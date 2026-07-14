@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Message } from '@/hooks/useChatSocket';
+import { Check, CheckCheck, Bot, User } from 'lucide-react';
 
 interface MessageBubbleProps {
   message: Message;
@@ -13,16 +14,20 @@ function formatTime(iso: string): string {
 
 function StatusTick({ status }: { status: string }) {
   if (status === 'sending') {
-    return <span className="text-[9px] text-slate-500 select-none ml-1">○</span>;
+    return <span className="text-[10px] text-slate-400 select-none ml-1 animate-pulse">○</span>;
   }
   if (status === 'sent') {
-    return <span className="text-[9px] text-indigo-300/70 select-none ml-1">✓</span>;
+    return <Check className="h-3.5 w-3.5 text-indigo-200/80 select-none ml-1 shrink-0" />;
   }
   if (status === 'delivered') {
-    return <span className="text-[9px] text-indigo-300/70 select-none ml-1">✓✓</span>;
+    return <CheckCheck className="h-3.5 w-3.5 text-indigo-200/90 select-none ml-1 shrink-0" />;
   }
   if (status === 'read') {
-    return <span className="text-[9px] text-sky-400 font-bold select-none ml-1">✓✓</span>;
+    return (
+      <span title="Read by customer" className="inline-flex items-center ml-1 shrink-0">
+        <CheckCheck className="h-3.5 w-3.5 text-sky-300 font-extrabold select-none" />
+      </span>
+    );
   }
   return null;
 }
@@ -34,20 +39,28 @@ export function MessageBubble({ message: m }: MessageBubbleProps) {
   return (
     <div className={`flex ${isInbound ? 'justify-start' : 'justify-end'} group`}>
       <div
-        className={`relative max-w-[72%] rounded-2xl px-4 py-2.5 text-xs shadow-md transition-opacity duration-300 ${
-          isPending ? 'opacity-70' : 'opacity-100'
+        className={`relative max-w-[80%] sm:max-w-[70%] rounded-2xl px-4 py-3 text-xs sm:text-sm shadow-lg transition-all duration-200 ${
+          isPending ? 'opacity-70 scale-[0.99]' : 'opacity-100 scale-100'
         } ${
           isInbound
-            ? 'bg-slate-800/80 text-slate-100 rounded-tl-sm border border-slate-700/40'
-            : 'bg-gradient-to-br from-indigo-600 to-indigo-700 text-white rounded-tr-sm'
+            ? 'bg-darkCard text-slate-100 rounded-tl-sm border border-darkBorder shadow-black/40'
+            : 'bg-gradient-to-br from-indigo-600 via-indigo-600 to-purple-600 text-white rounded-tr-sm shadow-indigo-500/20'
         }`}
       >
-        {/* Message text */}
-        <p className="leading-relaxed whitespace-pre-wrap break-words">{m.text}</p>
+        {/* Sender Indicator header if inbound */}
+        {isInbound && (
+          <div className="flex items-center gap-1.5 mb-1.5 pb-1 border-b border-darkBorder/40 text-[10px] font-bold text-indigo-400">
+            <User className="h-3 w-3" />
+            <span>Customer Reply</span>
+          </div>
+        )}
 
-        {/* Footer row: timestamp + status */}
-        <div className="flex items-center justify-end gap-0.5 mt-1.5">
-          <span className={`text-[9px] font-mono ${isInbound ? 'text-slate-500' : 'text-indigo-200/70'}`}>
+        {/* Message text */}
+        <p className="leading-relaxed whitespace-pre-wrap break-words font-normal">{m.text}</p>
+
+        {/* Footer timestamp & checkmarks */}
+        <div className="flex items-center justify-end gap-1 mt-2">
+          <span className={`text-[10px] font-mono ${isInbound ? 'text-slate-500' : 'text-indigo-100/80'}`}>
             {formatTime(m.timestamp)}
           </span>
           {!isInbound && <StatusTick status={m.status} />}
