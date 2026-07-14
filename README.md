@@ -558,8 +558,6 @@ Distributed under the MIT License. See [LICENSE](LICENSE) for more details.
 ---
 
 ## Author
+Sai Aditiyaa R S
 
-**WA-SaaS Team**
-*Enterprise SaaS Platform Engineering.*
-
-For inquiries, support, or security report submissions, contact the team at [engineering@yourdomain.com](mailto:engineering@yourdomain.com).
+For inquiries, support, or security report submissions, contact saiaditiyaa07@gmail.com.
