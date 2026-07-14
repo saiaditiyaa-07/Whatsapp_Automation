@@ -5,8 +5,11 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Mail, Lock, ShieldAlert, ArrowRight, CheckCircle2, User, Building } from 'lucide-react';
 
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
+console.log("NEXT_PUBLIC_API_URL =", process.env.NEXT_PUBLIC_API_URL);
+console.log("API_BASE =", API_BASE);
 export default function SignupPage() {
   const router = useRouter();
   const [workspaceName, setWorkspaceName] = useState('');
