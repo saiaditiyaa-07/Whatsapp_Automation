@@ -5,8 +5,11 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Mail, Lock, ShieldAlert, ArrowRight, CheckCircle2 } from 'lucide-react';
 
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
+console.log("NEXT_PUBLIC_API_URL =", process.env.NEXT_PUBLIC_API_URL);
+console.log("API_BASE =", API_BASE);
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -18,7 +21,7 @@ export default function LoginPage() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
+
     if (!email.trim() || !password.trim()) {
       setError('Please fill in all fields');
       return;
