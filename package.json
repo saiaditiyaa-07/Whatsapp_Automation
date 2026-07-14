@@ -1,0 +1,16 @@
+{
+  "name": "whatsapp-automation-saas",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "db:start": "docker compose up -d",
+    "db:stop": "docker compose down",
+    "db:migrate": "npx prisma db push",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:dashboard": "npm run dev --prefix dashboard",
+    "install:all": "npm install --prefix backend && npm install --prefix dashboard"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
+  }
+}
